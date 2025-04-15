@@ -35,8 +35,29 @@ Invoke-Expression (&starship init powershell)
 Invoke-Expression (&{(zoxide init powershell --cmd cd | Out-String)})
 
 # Autocompletion
-Set-PSReadLineOption -PredictionSource HistoryAndPlugin
-Set-PSReadLineOption -PredictionViewStyle ListView
+function IsVirtualTerminalProcessingEnabled {
+	$MethodDefinitions = @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+'@
+	$kernel32 = Add-Type -MemberDefinition $MethodDefinitions -Name 'Kernel32' -Namespace 'Win32' -PassThru
+	$hConsoleHandle = $kernel32::GetStdHandle(-11) # STD_OUTPUT_HANDLE
+	$mode = 0
+	$kernel32::GetConsoleMode($hConsoleHandle, [ref]$mode) >$null
+
+	if ($mode -band 0x0004) { # 0x0004 ENABLE_VIRTUAL_TERMINAL_PROCESSING
+		return $true
+	}
+
+	return $false
+}
+
+if ((! [System.Console]::IsOutputRedirected) -and (IsVirtualTerminalProcessingEnabled)){ 
+  Set-PSReadLineOption -PredictionViewStyle ListView -PredictionSource History -HistoryNoDuplicates
+}
+
 Set-PSReadlineKeyHandler -Key Tab -Function MenuComplete
 Set-PSReadlineKeyHandler -Key Ctrl+u -Function RevertLine
 Set-PSReadlineKeyHandler -Chord Ctrl+j -Function NextSuggestion
