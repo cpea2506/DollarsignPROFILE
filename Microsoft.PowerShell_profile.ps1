@@ -8,6 +8,7 @@ Set-Alias cat bat
 Remove-Alias ls -Force -ErrorAction SilentlyContinue
 
 $env:XDG_CONFIG_HOME = "$HOME/.config"
+$env:FZF_DEFAULT_COMMAND = "rg --files . 2> nul"
 
 Function ls
 { 
