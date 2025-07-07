@@ -84,51 +84,67 @@ function Invoke-Starship-PreCommand
 function Optimize-Assemblies
 {
     param (
-        [string]$assemblyFilter,
-        [string]$activity = "Native Image Installation"
+        [string]$AssemblyFilter = "Microsoft.PowerShell.*",
+        [string]$Activity = "Native Image Installation"
     )
 
-    $is64 = Get-WmiObject -Query "SELECT * FROM Win32_ComputerSystem" | ForEach-Object { $_.SystemType -match "x64" }
+    $originalPath = $env:Path
+
+    # Find all ngen.exe instances
+    $ngenExecutables = Get-ChildItem -Path "$Env:SystemRoot\Microsoft.NET" -Recurse -Filter "ngen.exe" -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName -Unique
 
     try
     {
-        $architecture = if ($is64)
-        {
-            "64"
-        } else
-        {
-            ""
-        }
+        # Set path for dependency resolution
+        $env:Path = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
 
-        $ngenPath = "$($env:windir)\Microsoft.NET\Framework$($architecture)\v4.0.30319\ngen.exe"
-
-        # Get a list of loaded assemblies
-        $assemblies = [AppDomain]::CurrentDomain.GetAssemblies()
-
-        # Filter assemblies based on the provided filter
-        $filteredAssemblies = $assemblies | Where-Object { $_.FullName -ilike "$assemblyFilter*" }
+        # Filter loaded assemblies
+        $filteredAssemblies = [AppDomain]::CurrentDomain.GetAssemblies() |
+            Where-Object { $_.Location -and $_.FullName -ilike "$AssemblyFilter*" }
 
         if ($filteredAssemblies.Count -eq 0)
         {
-            Write-Host "No matching assemblies found for optimization."
+            Write-Host "No matching assemblies found for optimization." -ForegroundColor Yellow
             return
         }
 
         foreach ($assembly in $filteredAssemblies)
         {
-            # Get the name of the assembly
-            $name = [System.IO.Path]::GetFileName($assembly.Location)
+            $assemblyPath = $assembly.Location
+            $assemblyName = [System.IO.Path]::GetFileName($assemblyPath)
 
-            # Display progress
-            Write-Progress -Activity $activity -Status "Optimizing $name"
+            Write-Progress -Activity $Activity -Status "Optimizing $assemblyName"
 
-            # Use Ngen to install the assembly
-            Start-Process -FilePath $ngenPath -ArgumentList "install `"$($assembly.Location)`"" -Wait -WindowStyle Hidden
+            foreach ($ngenPath in $ngenExecutables)
+            {
+                try
+                {
+                    Start-Process -FilePath $ngenPath -ArgumentList "install `"$assemblyPath`"" -Wait -WindowStyle Hidden
+                } catch
+                {
+                    Write-Warning "Failed to NGEN $assemblyName with $ngenPath"
+                }
+            }
         }
 
-        Write-Host "Optimization complete."
+        foreach ($ngenPath in $ngenExecutables)
+        {
+            try
+            {
+                Start-Process -FilePath $ngenPath -ArgumentList "ExecuteQueuedItems" -Wait -WindowStyle Hidden
+            } catch
+            {
+                Write-Warning "Failed to execute queued items in $ngenPath"
+            }
+        }
+
+        Write-Host "Optimization complete." -ForegroundColor Green
     } catch
     {
-        Write-Host "An error occurred: $_"
+        Write-Error "An error occurred: $_"
+    } finally
+    {
+        $env:Path = $originalPath
     }
 }
